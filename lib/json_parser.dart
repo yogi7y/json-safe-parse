@@ -67,15 +67,14 @@ class JsonParser {
       try {
         if (fromJson != null) {
           if (value[i] is! Map<String, dynamic>) {
-            _defaultLogger?.logError({
-              'error': 'Expected Map for object parsing',
-              'field': key,
-              'model': modelName,
-              'index': i,
-              'expected': 'Map<String, dynamic>',
-              'actual': value[i].runtimeType.toString(),
-              'value': value[i],
-            });
+            _defaultLogger?.logError(ParseException(
+              'Expected Map for object parsing in list "$key" at index $i',
+              field: key,
+              model: modelName,
+              expected: 'Map<String, dynamic>',
+              actual: '${value[i].runtimeType}',
+              json: {'index': i, 'value': value[i]},
+            ));
             continue;
           }
           validItems.add(fromJson(value[i] as Map<String, dynamic>));
@@ -83,15 +82,17 @@ class JsonParser {
           validItems.add(value[i] as T);
         }
       } catch (e) {
-        _defaultLogger?.logError({
-          'error': fromJson != null ? 'Object parsing failed' : 'Type mismatch in list',
-          'field': key,
-          'model': modelName,
-          'index': i,
-          'expected': T.toString(),
-          'actual': value[i],
-          'exception': fromJson != null ? e.toString() : null,
-        });
+        _defaultLogger?.logError(ParseException(
+          fromJson != null
+              ? 'Failed to parse object in list "$key" at index $i'
+              : 'Type mismatch in list "$key" at index $i',
+          field: key,
+          model: modelName,
+          expected: T.toString(),
+          actual: value[i]?.runtimeType.toString(),
+          json: {'index': i, 'value': value[i]},
+          originalError: e,
+        ));
       }
     }
 
@@ -127,28 +128,28 @@ class JsonParser {
 
     for (final entry in value.entries) {
       if (entry.key is! String) {
-        _defaultLogger?.logError({
-          'error': 'Invalid map key type',
-          'field': key,
-          'model': modelName,
-          'key': entry.key,
-          'keyType': entry.key.runtimeType.toString(),
-        });
+        _defaultLogger?.logError(ParseException(
+          'Invalid map key type in "$key"',
+          field: key,
+          model: modelName,
+          expected: 'String key',
+          actual: '${entry.key.runtimeType} key',
+          json: {'key': entry.key, 'value': entry.value},
+        ));
         continue;
       }
 
       try {
         if (fromJson != null) {
           if (entry.value is! Map<String, dynamic>) {
-            _defaultLogger?.logError({
-              'error': 'Expected Map for object parsing',
-              'field': key,
-              'model': modelName,
-              'key': entry.key,
-              'expected': 'Map<String, dynamic>',
-              'actual': entry.value.runtimeType.toString(),
-              'value': entry.value,
-            });
+            _defaultLogger?.logError(ParseException(
+              'Expected Map for object parsing in map "$key" at key "${entry.key}"',
+              field: key,
+              model: modelName,
+              expected: 'Map<String, dynamic>',
+              actual: '${entry.value.runtimeType}',
+              json: {'key': entry.key, 'value': entry.value},
+            ));
             continue;
           }
           validEntries[entry.key as String] = fromJson(entry.value as Map<String, dynamic>);
@@ -160,15 +161,17 @@ class JsonParser {
           }
         }
       } catch (e) {
-        _defaultLogger?.logError({
-          'error': fromJson != null ? 'Object parsing failed' : 'Type mismatch in map',
-          'field': key,
-          'model': modelName,
-          'key': entry.key,
-          'expected': V.toString(),
-          'actual': entry.value,
-          'exception': fromJson != null ? e.toString() : null,
-        });
+        _defaultLogger?.logError(ParseException(
+          fromJson != null
+              ? 'Failed to parse object in map "$key" at key "${entry.key}"'
+              : 'Type mismatch in map "$key" at key "${entry.key}"',
+          field: key,
+          model: modelName,
+          expected: V.toString(),
+          actual: entry.value?.runtimeType.toString(),
+          json: {'key': entry.key, 'value': entry.value},
+          originalError: e,
+        ));
       }
     }
 

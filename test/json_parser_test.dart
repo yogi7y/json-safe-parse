@@ -395,14 +395,15 @@ void main() {
       expect(logger.errors.length, equals(2));
 
       // Check first error (123)
-      final error1 = logger.errors[0] as Map;
-      expect(error1['index'], equals(1));
-      expect(error1['actual'], equals(123));
+      final error1 = logger.errors[0] as ParseException;
+      expect(error1.field, equals('items'));
+      expect(error1.model, equals('Test'));
+      expect(error1.message, contains('Type mismatch in list'));
 
       // Check second error (true)
-      final error2 = logger.errors[1] as Map;
-      expect(error2['index'], equals(2));
-      expect(error2['actual'], equals(true));
+      final error2 = logger.errors[1] as ParseException;
+      expect(error2.field, equals('items'));
+      expect(error2.model, equals('Test'));
     });
 
     test('logs errors for invalid map values', () {
@@ -423,27 +424,21 @@ void main() {
       // Check that errors were logged for all non-int values
       expect(logger.errors.length, equals(3));
 
-      // Find error for 'enabled'
-      final enabledError = logger.errors.firstWhere(
-        (e) => (e as Map)['key'] == 'enabled',
-      ) as Map;
-      expect(enabledError['error'], equals('Type mismatch in map'));
-      expect(enabledError['field'], equals('config'));
-      expect(enabledError['model'], equals('Test'));
-      expect(enabledError['expected'], equals('int'));
-      expect(enabledError['actual'], equals('yes'));
+      // All errors should be ParseExceptions
+      for (final error in logger.errors) {
+        expect(error, isA<ParseException>());
+        final parseError = error as ParseException;
+        expect(parseError.field, equals('config'));
+        expect(parseError.model, equals('Test'));
+      }
 
-      // Find error for 'retry'
-      final retryError = logger.errors.firstWhere(
-        (e) => (e as Map)['key'] == 'retry',
-      ) as Map;
-      expect(retryError['actual'], equals(true));
-
-      // Find error for 'maxAttempts'
-      final maxAttemptsError = logger.errors.firstWhere(
-        (e) => (e as Map)['key'] == 'maxAttempts',
-      ) as Map;
-      expect(maxAttemptsError['actual'], isNull);
+      // Check that we have errors for the right keys
+      final errorMessages = logger.errors
+          .map((e) => (e as ParseException).message)
+          .join(' ');
+      expect(errorMessages, contains('enabled'));
+      expect(errorMessages, contains('retry'));
+      expect(errorMessages, contains('maxAttempts'));
     });
 
     test('no errors logged when all items valid', () {
