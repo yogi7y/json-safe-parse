@@ -3,9 +3,20 @@
 import 'package:test/test.dart';
 import 'package:serialization/serialization.dart';
 
+class TestErrorLogger extends ErrorLogger {
+  final errors = <Object?>[];
+
+  @override
+  void logError(Object? error) {
+    errors.add(error);
+  }
+
+  void clear() => errors.clear();
+}
+
 void main() {
-  group('JsonParser Core', () {
-    test('parse basic types (String, int, double, bool)', () {
+  group('Basic Type Parsing', () {
+    test('parses primitive types correctly', () {
       final json = {
         'name': 'John',
         'age': 30,
@@ -20,7 +31,7 @@ void main() {
       expect(parser.parse<bool>('active'), isTrue);
     });
 
-    test('parse nullable types', () {
+    test('handles nullable fields', () {
       final json = {'name': 'John', 'bio': null};
       final parser = JsonParser(json, 'Test');
 
@@ -29,15 +40,39 @@ void main() {
       expect(parser.parse<String?>('name'), equals('John'));
     });
 
-    test('use fallback values', () {
+    test('uses fallback values only for missing fields, not type mismatches', () {
       final json = {'count': 'invalid'};
       final parser = JsonParser(json, 'Test');
 
+      // Fallback works for missing fields
       expect(parser.parse<String>('missing', fallback: 'default'), equals('default'));
-      expect(parser.parse<int>('count', fallback: 0), equals(0));
+
+      // But type mismatch should throw even with fallback
+      expect(
+        () => parser.parse<int>('count', fallback: 0),
+        throwsA(isA<ParseException>()),
+      );
+
+      // Nullable types still work for missing fields
+      expect(parser.parse<int?>('missing'), isNull);
     });
 
-    test('parseList for typed lists', () {
+    test('distinguishes empty values from null', () {
+      final json = {
+        'empty': '',
+        'zero': 0,
+        'false': false,
+      };
+      final parser = JsonParser(json, 'Test');
+
+      expect(parser.parse<String>('empty'), equals(''));
+      expect(parser.parse<int>('zero'), equals(0));
+      expect(parser.parse<bool>('false'), isFalse);
+    });
+  });
+
+  group('List Parsing', () {
+    test('parses typed lists', () {
       final json = {
         'tags': ['dart', 'flutter'],
         'scores': [90, 85, 88],
@@ -56,10 +91,73 @@ void main() {
       expect(empty, isEmpty);
     });
 
-    test('parseMap for typed maps', () {
+    test('handles lists with nullable items', () {
+      final json = {
+        'items': ['a', null, 'b'],
+        'numbers': [1, null, 3, null],
+      };
+      final parser = JsonParser(json, 'Test');
+
+      final items = parser.parseList<String?>('items');
+      expect(items, equals(['a', null, 'b']));
+      expect(items[1], isNull);
+
+      final numbers = parser.parseList<int?>('numbers');
+      expect(numbers, equals([1, null, 3, null]));
+    });
+
+    test('handles nullable lists vs lists with nullable items', () {
+      final json = {
+        'present': ['a', 'b'],
+        'missing': null,
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Now returns default empty list for missing field
+      expect(parser.parseList<String>('missing'), equals([]));
+
+      // Can use custom fallback
+      final fallbackList = <String>['default'];
+      expect(parser.parseList<String>('missing', fallback: fallbackList), equals(fallbackList));
+
+      // List with nullable items can't be null but items can
+      final items = parser.parseList<String?>('present');
+      expect(items, equals(['a', 'b']));
+    });
+
+    test('handles mixed numeric types in lists', () {
+      final json = {
+        'mixed': [1, 2.5, 3], // Mix of int and double
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Now skips invalid items instead of throwing
+      final ints = parser.parseList<int>('mixed');
+      expect(ints, equals([1, 3])); // 2.5 is skipped
+
+      // Should work for List<num>
+      final nums = parser.parseList<num>('mixed');
+      expect(nums, equals([1, 2.5, 3]));
+    });
+
+    test('skips invalid items in lists', () {
+      final json = {
+        'mixed': ['hello', 123, true, 'world'],
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Now returns valid items, skipping invalid ones
+      final strings = parser.parseList<String>('mixed');
+      expect(strings, equals(['hello', 'world'])); // 123 and true are skipped
+    });
+  });
+
+  group('Map Parsing', () {
+    test('parses typed maps', () {
       final json = {
         'stats': {'views': 100, 'likes': 50},
         'config': {'theme': 'dark', 'lang': 'en'},
+        'empty': {},
       };
       final parser = JsonParser(json, 'Test');
 
@@ -69,33 +167,66 @@ void main() {
 
       final config = parser.parseMap<String>('config');
       expect(config['theme'], equals('dark'));
+
+      final empty = parser.parseMap<String>('empty');
+      expect(empty, isEmpty);
     });
 
-    test('throw ParseException with context for errors', () {
-      final json = {'age': '30'};
-      final parser = JsonParser(json, 'User');
+    test('handles maps with nullable values', () {
+      final json = {
+        'settings': {
+          'theme': 'dark',
+          'backup': null,
+          'timeout': 30,
+        },
+      };
+      final parser = JsonParser(json, 'Test');
 
-      expect(
-        () => parser.parse<int>('age'),
-        throwsA(
-          isA<ParseException>()
-              .having((e) => e.field, 'field', 'age')
-              .having((e) => e.model, 'model', 'User')
-              .having((e) => e.expected, 'expected', 'int')
-              .having((e) => e.actual, 'actual', contains('String')),
-        ),
-      );
+      // Now skips null value if type doesn't allow it
+      final stringSettings = parser.parseMap<String>('settings');
+      expect(stringSettings['theme'], equals('dark'));
+      expect(stringSettings.containsKey('backup'), isFalse); // null skipped
+      expect(stringSettings.containsKey('timeout'), isFalse); // int skipped
 
-      expect(
-        () => parser.parse<String>('email'),
-        throwsA(
-          isA<ParseException>()
-              .having((e) => e.message, 'message', contains('Missing required field')),
-        ),
-      );
+      // But this should work with dynamic values
+      final settings = parser.parseMap<dynamic>('settings');
+      expect(settings['theme'], equals('dark'));
+      expect(settings['backup'], isNull);
+      expect(settings['timeout'], equals(30));
     });
 
-    test('parse nested models', () {
+    test('handles int to double conversion in maps', () {
+      final json = {
+        'scores': {'math': 95, 'english': 88.5}, // Mixed int and double
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Should auto-convert int to double
+      final scores = parser.parseMap<double>('scores');
+      expect(scores['math'], equals(95.0));
+      expect(scores['english'], equals(88.5));
+    });
+
+    test('skips invalid values in maps', () {
+      final json = {
+        'scores': {
+          'math': '95.5',
+          'english': 88.0,
+          'science': 92.5,
+        },
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Now skips invalid values instead of throwing
+      final scores = parser.parseMap<double>('scores');
+      expect(scores['math'], isNull); // '95.5' string is skipped
+      expect(scores['english'], equals(88.0)); // int auto-converted to double
+      expect(scores['science'], equals(92.5));
+    });
+  });
+
+  group('Nested Structures', () {
+    test('parses nested models', () {
       final json = {
         'id': 123,
         'name': 'John Doe',
@@ -127,58 +258,287 @@ void main() {
       expect(user.scores['math'], equals(95.5));
     });
 
-    test('handle edge cases', () {
+    test('handles list of maps', () {
       final json = {
-        'empty': '',
-        'zero': 0,
-        'false': false,
-        'emptyList': [],
-        'emptyMap': {},
+        'items': [
+          {'id': 1, 'name': 'Item 1'},
+          {'id': 2, 'name': 'Item 2'},
+        ],
       };
       final parser = JsonParser(json, 'Test');
 
-      // Empty values are valid, not null
-      expect(parser.parse<String>('empty'), equals(''));
-      expect(parser.parse<int>('zero'), equals(0));
-      expect(parser.parse<bool>('false'), isFalse);
-      expect(parser.parse<List>('emptyList'), isEmpty);
-      expect(parser.parse<Map>('emptyMap'), isEmpty);
+      final items = parser.parseList<Map<String, dynamic>>('items');
+      expect(items.length, equals(2));
+      expect(items[0]['id'], equals(1));
+      expect(items[1]['name'], equals('Item 2'));
     });
 
-    test('parseList validates item types', () {
+    test('handles map of lists', () {
       final json = {
-        'mixed': ['hello', 123, true],
-      };
-      final parser = JsonParser(json, 'Test');
-
-      expect(
-        () => parser.parseList<String>('mixed'),
-        throwsA(
-          isA<ParseException>().having((e) => e.message, 'message', contains('at index 1')),
-        ),
-      );
-    });
-
-    test('parseMap validates value types', () {
-      final json = {
-        'scores': {
-          'math': '95.5',
-          'english': 88.0,
+        'groups': {
+          'admin': ['user1', 'user2'],
+          'guest': ['user3'],
+          'empty': [],
         },
       };
       final parser = JsonParser(json, 'Test');
 
+      // Can't directly parse as Map<String, List<String>>
+      // Need to parse as Map<String, dynamic> and handle lists manually
+      final groups = parser.parseMap<dynamic>('groups');
+      expect(groups['admin'], equals(['user1', 'user2']));
+      expect(groups['guest'], equals(['user3']));
+      expect(groups['empty'], isEmpty);
+    });
+
+    test('handles deeply nested structures', () {
+      final json = {
+        'level1': {
+          'level2': {
+            'level3': {
+              'value': 'deep',
+              'items': [1, 2, 3],
+            },
+          },
+        },
+      };
+      final parser = JsonParser(json, 'Test');
+
+      final level1 = parser.parse<Map<String, dynamic>>('level1');
+      final level2 = level1['level2'] as Map<String, dynamic>;
+      final level3 = level2['level3'] as Map<String, dynamic>;
+      expect(level3['value'], equals('deep'));
+      expect(level3['items'], equals([1, 2, 3]));
+    });
+  });
+
+  group('Error Handling', () {
+    test('provides detailed context for type errors', () {
+      final json = {'age': '30'};
+      final parser = JsonParser(json, 'User');
+
       expect(
-        () => parser.parseMap<double>('scores'),
+        () => parser.parse<int>('age'),
         throwsA(
           isA<ParseException>()
-              .having((e) => e.message, 'message', contains('Type mismatch in map')),
+              .having((e) => e.field, 'field', 'age')
+              .having((e) => e.model, 'model', 'User')
+              .having((e) => e.expected, 'expected', 'int')
+              .having((e) => e.actual, 'actual', contains('String')),
         ),
       );
+    });
+
+    test('provides detailed context for missing fields', () {
+      final json = <String, dynamic>{};
+      final parser = JsonParser(json, 'User');
+
+      expect(
+        () => parser.parse<String>('email'),
+        throwsA(
+          isA<ParseException>()
+              .having((e) => e.message, 'message', contains('Missing required field'))
+              .having((e) => e.field, 'field', 'email')
+              .having((e) => e.model, 'model', 'User'),
+        ),
+      );
+    });
+
+    test('throws on type mismatches for single values, but not lists', () {
+      final json = {
+        'count': 'not a number',
+        'valid': 42,
+        'list': 'not a list',
+        'items': [1, 'two', 3],
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Single value type mismatch should throw even with fallback
+      expect(
+        () => parser.parse<int>('count', fallback: 0),
+        throwsA(isA<ParseException>()),
+      );
+
+      // Fallback not used when type matches
+      expect(parser.parse<int>('valid', fallback: 0), equals(42));
+
+      // Non-list value should throw
+      expect(
+        () => parser.parseList<String>('list'),
+        throwsA(isA<ParseException>()),
+      );
+
+      // List with mixed types returns valid items only
+      final nums = parser.parseList<int>('items');
+      expect(nums, equals([1, 3])); // 'two' is skipped
+    });
+  });
+
+  group('Error Logging', () {
+    late TestErrorLogger logger;
+
+    setUp(() {
+      logger = TestErrorLogger();
+      JsonParser.setDefaultLogger(logger);
+    });
+
+    test('logs errors for invalid list items', () {
+      final json = {
+        'items': ['valid', 123, true, 'another', null],
+      };
+      final parser = JsonParser(json, 'Test');
+
+      final items = parser.parseList<String>('items');
+      expect(items, equals(['valid', 'another'])); // 123, true, and null skipped
+
+      // Check that errors were logged for all invalid items
+      expect(logger.errors.length, equals(3));
+
+      // Check first error (123)
+      final error1 = logger.errors[0] as Map;
+      expect(error1['error'], equals('Type mismatch in list'));
+      expect(error1['field'], equals('items'));
+      expect(error1['model'], equals('Test'));
+      expect(error1['index'], equals(1));
+      expect(error1['expected'], equals('String'));
+      expect(error1['actual'], equals(123));
+
+      // Check second error (true)
+      final error2 = logger.errors[1] as Map;
+      expect(error2['error'], equals('Type mismatch in list'));
+      expect(error2['index'], equals(2));
+      expect(error2['actual'], equals(true));
+
+      // Check third error (null)
+      final error3 = logger.errors[2] as Map;
+      expect(error3['index'], equals(4));
+      expect(error3['actual'], isNull);
+    });
+
+    test('logs errors for invalid map values', () {
+      final json = {
+        'config': {
+          'timeout': 30,
+          'enabled': 'yes',
+          'retry': true,
+          'maxAttempts': null,
+        },
+      };
+      final parser = JsonParser(json, 'Test');
+
+      final config = parser.parseMap<int>('config');
+      expect(config.length, equals(1)); // Only 'timeout' is valid
+      expect(config['timeout'], equals(30));
+
+      // Check that errors were logged for all non-int values
+      expect(logger.errors.length, equals(3));
+
+      // Find error for 'enabled'
+      final enabledError = logger.errors.firstWhere(
+        (e) => (e as Map)['key'] == 'enabled',
+      ) as Map;
+      expect(enabledError['error'], equals('Type mismatch in map'));
+      expect(enabledError['field'], equals('config'));
+      expect(enabledError['model'], equals('Test'));
+      expect(enabledError['expected'], equals('int'));
+      expect(enabledError['actual'], equals('yes'));
+
+      // Find error for 'retry'
+      final retryError = logger.errors.firstWhere(
+        (e) => (e as Map)['key'] == 'retry',
+      ) as Map;
+      expect(retryError['actual'], equals(true));
+
+      // Find error for 'maxAttempts'
+      final maxAttemptsError = logger.errors.firstWhere(
+        (e) => (e as Map)['key'] == 'maxAttempts',
+      ) as Map;
+      expect(maxAttemptsError['actual'], isNull);
+    });
+
+    test('no errors logged when all items valid', () {
+      final json = {
+        'numbers': [1, 2, 3],
+        'config': {'a': 1, 'b': 2},
+      };
+      final parser = JsonParser(json, 'Test');
+
+      logger.clear();
+      parser.parseList<int>('numbers');
+      parser.parseMap<int>('config');
+
+      expect(logger.errors, isEmpty);
+    });
+  });
+
+  group('Edge Cases', () {
+    test('handles very large numbers', () {
+      final json = {
+        'bigInt': 9223372036854775807, // Max int64
+        'bigDouble': 1.7976931348623157e+308, // Near max double
+      };
+      final parser = JsonParser(json, 'Test');
+
+      expect(parser.parse<int>('bigInt'), equals(9223372036854775807));
+      expect(parser.parse<double>('bigDouble'), equals(1.7976931348623157e+308));
+    });
+
+    test('ignores extra fields in JSON', () {
+      final json = {
+        'id': 123,
+        'name': 'Test',
+        'extra1': 'ignored',
+        'extra2': {'nested': 'also ignored'},
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Should only parse what we ask for
+      expect(parser.parse<int>('id'), equals(123));
+      expect(parser.parse<String>('name'), equals('Test'));
+      // Extra fields don't cause issues
+    });
+
+    test('handles special string values', () {
+      final json = {
+        'multiline': 'line1\nline2\nline3',
+        'tabs': 'col1\tcol2\tcol3',
+        'quotes': 'He said "Hello"',
+        'backslash': 'path\\to\\file',
+      };
+      final parser = JsonParser(json, 'Test');
+
+      expect(parser.parse<String>('multiline'), contains('\n'));
+      expect(parser.parse<String>('tabs'), contains('\t'));
+      expect(parser.parse<String>('quotes'), contains('"'));
+      expect(parser.parse<String>('backslash'), contains('\\'));
+    });
+
+    test('handles Map<String, dynamic> directly', () {
+      final json = {
+        'data': {
+          'string': 'text',
+          'number': 123,
+          'bool': true,
+          'null': null,
+          'list': [1, 2, 3],
+          'map': {'nested': 'value'},
+        },
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Direct parsing as Map<String, dynamic> works without iteration
+      final data = parser.parse<Map<String, dynamic>>('data');
+      expect(data['string'], equals('text'));
+      expect(data['number'], equals(123));
+      expect(data['bool'], isTrue);
+      expect(data['null'], isNull);
+      expect(data['list'], equals([1, 2, 3]));
+      expect(data['map'], equals({'nested': 'value'}));
     });
   });
 }
 
+// Simple test models
 class Address {
   final String street;
   final String city;

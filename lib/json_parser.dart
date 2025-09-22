@@ -1,7 +1,15 @@
+import 'error_logger.dart';
 import 'parse_exception.dart';
 
 /// A parser for JSON data that provides detailed error messages
 class JsonParser {
+  static ErrorLogger? _defaultLogger;
+
+  /// Set a global error logger for all JsonParser instances
+  static void setDefaultLogger(ErrorLogger logger) {
+    _defaultLogger = logger;
+  }
+
   final Map<String, dynamic> json;
   final String modelName;
 
@@ -11,13 +19,12 @@ class JsonParser {
   T parse<T>(String key, {T? fallback}) {
     final value = json[key];
 
-    // Check if T is nullable (e.g., String? vs String)
     final isNullable = null is T;
 
-    // Handle null values
+    // Handle null/missing values - fallback applies here
     if (value == null) {
       if (isNullable) {
-        return null as T; // Valid for nullable types
+        return null as T;
       }
       if (fallback != null) {
         return fallback;
@@ -25,17 +32,9 @@ class JsonParser {
       _throwMissingField(key);
     }
 
-    // Type checking - Dart's 'is' operator handles this correctly
-    if (value is T) {
-      return value;
-    }
+    if (value is! T) _throwTypeMismatch(key, T, value);
 
-    // Type mismatch - use fallback if available
-    if (fallback != null) {
-      return fallback;
-    }
-
-    _throwTypeMismatch(key, T, value);
+    return value;
   }
 
   /// Parse a List field with specific item type validation
@@ -48,52 +47,40 @@ class JsonParser {
   /// final tags = parser.parseList<String>('tags');  // Returns List<String>
   /// final scores = parser.parseList<int>('scores');  // Returns List<int>
   /// ```
-  List<T> parseList<T>(String key, {List<T>? fallback}) {
+  List<T> parseList<T>(String key, {List<T> fallback = const []}) {
     final value = json[key];
 
-    // Handle null values
+    // Handle null/missing values - use fallback
     if (value == null) {
-      if (fallback != null) {
-        return fallback;
-      }
-      _throwMissingField(key);
+      return fallback;
     }
 
-    // Check if value is a List
+    // Type checking - throw for non-list
     if (value is! List) {
-      if (fallback != null) {
-        return fallback;
-      }
       _throwTypeMismatch(key, List, value);
     }
 
-    // Try to cast the list to List<T>
-    try {
-      // This will validate each item is of type T
-      return List<T>.from(value);
-    } catch (e) {
-      // If cast fails, try to find which item caused the problem
-      if (fallback != null) {
-        return fallback;
-      }
+    // Build result list with single iteration
+    final validItems = <T>[];
 
-      // Find the problematic item for better error reporting
-      for (int i = 0; i < value.length; i++) {
-        if (value[i] != null && value[i] is! T) {
-          throw ParseException(
-            'Type mismatch in list "$key" at index $i in $modelName',
-            field: key,
-            model: modelName,
-            expected: 'List<$T>',
-            actual: 'Item at [$i] is ${value[i].runtimeType}: ${value[i]}',
-            json: json,
-          );
-        }
+    for (int i = 0; i < value.length; i++) {
+      try {
+        validItems.add(value[i] as T);
+      } catch (e) {
+        // Log error if logger is configured
+        _defaultLogger?.logError({
+          'error': 'Type mismatch in list',
+          'field': key,
+          'model': modelName,
+          'index': i,
+          'expected': T.toString(),
+          'actual': value[i],
+        });
+        // Skip this item and continue
       }
-
-      // If we couldn't find the specific item, throw generic error
-      _throwTypeMismatch(key, List<T>, value);
     }
+
+    return validItems;
   }
 
   /// Parse a Map field with specific key and value type validation
@@ -106,74 +93,58 @@ class JsonParser {
   /// final scores = parser.parseMap<int>('scores');  // Returns Map<String, int>
   /// final config = parser.parseMap<String>('config');  // Returns Map<String, String>
   /// ```
-  Map<String, V> parseMap<V>(String key, {Map<String, V>? fallback}) {
+  Map<String, V> parseMap<V>(String key, {Map<String, V> fallback = const {}}) {
     final value = json[key];
 
-    // Handle null values
+    // Handle null/missing values - use fallback
     if (value == null) {
-      if (fallback != null) {
-        return fallback;
-      }
-      _throwMissingField(key);
+      return fallback;
     }
 
-    // Check if value is a Map
+    // Type checking - throw for non-map
     if (value is! Map) {
-      if (fallback != null) {
-        return fallback;
-      }
       _throwTypeMismatch(key, Map, value);
     }
 
-    // Try to cast the map to Map<String, V>
-    try {
-      final result = <String, V>{};
-      value.forEach((k, v) {
-        if (k is! String) {
-          throw FormatException('Map key must be String, got ${k.runtimeType}');
-        }
+    // Build result map with single iteration
+    final validEntries = <String, V>{};
 
+    for (final entry in value.entries) {
+      // Check key is String
+      if (entry.key is! String) {
+        _defaultLogger?.logError({
+          'error': 'Invalid map key type',
+          'field': key,
+          'model': modelName,
+          'key': entry.key,
+          'keyType': entry.key.runtimeType.toString(),
+        });
+        continue; // Skip this entry
+      }
+
+      // Try to cast the value
+      try {
         // Special handling for double type - accept int as well
-        if (V == double && v is int) {
-          result[k as String] = v.toDouble() as V;
-        } else if (v != null && v is! V) {
-          throw FormatException('Map value at key "$k" must be $V, got ${v.runtimeType}: $v');
+        if (V == double && entry.value is int) {
+          validEntries[entry.key as String] = (entry.value as int).toDouble() as V;
         } else {
-          result[k as String] = v as V;
+          validEntries[entry.key as String] = entry.value as V;
         }
-      });
-      return result;
-    } catch (e) {
-      if (fallback != null) {
-        return fallback;
+      } catch (e) {
+        // Log error if logger is configured
+        _defaultLogger?.logError({
+          'error': 'Type mismatch in map',
+          'field': key,
+          'model': modelName,
+          'key': entry.key,
+          'expected': V.toString(),
+          'actual': entry.value,
+        });
+        // Skip this entry and continue
       }
-
-      // Find the problematic entry for better error reporting
-      for (final entry in value.entries) {
-        if (entry.key is! String) {
-          throw ParseException(
-            'Invalid map key type in "$key" in $modelName',
-            field: key,
-            model: modelName,
-            expected: 'Map<String, $V>',
-            actual: 'Key "${entry.key}" is ${entry.key.runtimeType}',
-            json: json,
-          );
-        }
-        if (entry.value != null && entry.value is! V) {
-          throw ParseException(
-            'Type mismatch in map "$key" at key "${entry.key}" in $modelName',
-            field: key,
-            model: modelName,
-            expected: 'Map<String, $V>',
-            actual: 'Value at ["${entry.key}"] is ${entry.value.runtimeType}: ${entry.value}',
-            json: json,
-          );
-        }
-      }
-
-      _throwTypeMismatch(key, Map<String, V>, value);
     }
+
+    return validEntries;
   }
 
   Never _throwMissingField(String key) {
