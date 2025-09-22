@@ -1,6 +1,6 @@
 # Safe JSON Serialization
 
-An internal JSON parsing library that provides detailed error messages, partial data recovery, and production-ready error logging.
+A JSON parsing library that provides detailed error messages, partial data recovery, and production-ready error logging.
 
 ## The Problem
 
