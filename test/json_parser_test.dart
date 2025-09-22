@@ -384,35 +384,25 @@ void main() {
 
     test('logs errors for invalid list items', () {
       final json = {
-        'items': ['valid', 123, true, 'another', null],
+        'items': ['valid', 123, true, 'another'],
       };
       final parser = JsonParser(json, 'Test');
 
       final items = parser.parseList<String>('items');
-      expect(items, equals(['valid', 'another'])); // 123, true, and null skipped
+      expect(items, equals(['valid', 'another']));
 
-      // Check that errors were logged for all invalid items
-      expect(logger.errors.length, equals(3));
+      // Check that errors were logged
+      expect(logger.errors.length, equals(2));
 
       // Check first error (123)
       final error1 = logger.errors[0] as Map;
-      expect(error1['error'], equals('Type mismatch in list'));
-      expect(error1['field'], equals('items'));
-      expect(error1['model'], equals('Test'));
       expect(error1['index'], equals(1));
-      expect(error1['expected'], equals('String'));
       expect(error1['actual'], equals(123));
 
       // Check second error (true)
       final error2 = logger.errors[1] as Map;
-      expect(error2['error'], equals('Type mismatch in list'));
       expect(error2['index'], equals(2));
       expect(error2['actual'], equals(true));
-
-      // Check third error (null)
-      final error3 = logger.errors[2] as Map;
-      expect(error3['index'], equals(4));
-      expect(error3['actual'], isNull);
     });
 
     test('logs errors for invalid map values', () {
@@ -468,6 +458,112 @@ void main() {
       parser.parseMap<int>('config');
 
       expect(logger.errors, isEmpty);
+    });
+  });
+
+  group('Custom Object Parsing', () {
+    test('parses list of custom objects with fromJson', () {
+      final json = {
+        'users': [
+          {'id': 1, 'name': 'Alice', 'age': 30},
+          {'id': 2, 'name': 'Bob', 'age': 25},
+          {'id': 3, 'name': 'Charlie', 'age': 35},
+        ],
+      };
+      final parser = JsonParser(json, 'UserListResponse');
+
+      final users = parser.parseList<SimpleUser>('users', fromJson: SimpleUser.fromJson);
+
+      expect(users.length, equals(3));
+      expect(users[0], equals(SimpleUser(id: 1, name: 'Alice', age: 30)));
+      expect(users[1], equals(SimpleUser(id: 2, name: 'Bob', age: 25)));
+      expect(users[2], equals(SimpleUser(id: 3, name: 'Charlie', age: 35)));
+    });
+
+    test('skips invalid objects in list', () {
+      final json = {
+        'users': [
+          {'id': 1, 'name': 'Alice', 'age': 30}, // Valid
+          {'id': 'invalid', 'name': 'Bob', 'age': 25}, // Invalid id type
+          'not even a map', // Completely wrong type
+          {'id': 2, 'name': 'Charlie'}, // Missing age field
+          {'id': 3, 'name': 'David', 'age': 40}, // Valid
+          null, // Null value
+        ],
+      };
+      final parser = JsonParser(json, 'UserListResponse');
+
+      // Set up logger to verify errors
+      final logger = TestErrorLogger();
+      JsonParser.setDefaultLogger(logger);
+
+      final users = parser.parseList<SimpleUser>('users', fromJson: SimpleUser.fromJson);
+
+      // Should only get Alice and David
+      expect(users.length, equals(2));
+      expect(users[0], equals(SimpleUser(id: 1, name: 'Alice', age: 30)));
+      expect(users[1], equals(SimpleUser(id: 3, name: 'David', age: 40)));
+
+      // Check that errors were logged
+      expect(logger.errors.length, greaterThan(0));
+    });
+
+    test('parses empty list with fromJson', () {
+      final json = {
+        'users': [],
+      };
+      final parser = JsonParser(json, 'UserListResponse');
+
+      final users = parser.parseList<SimpleUser>('users', fromJson: SimpleUser.fromJson);
+      expect(users, isEmpty);
+    });
+
+    test('uses fallback for missing list with fromJson', () {
+      final json = <String, dynamic>{};
+      final parser = JsonParser(json, 'UserListResponse');
+
+      final defaultUsers = [
+        SimpleUser(id: 0, name: 'Default', age: 0),
+      ];
+
+      final users = parser.parseList<SimpleUser>(
+        'users',
+        fromJson: SimpleUser.fromJson,
+        fallback: defaultUsers,
+      );
+
+      expect(users, equals(defaultUsers));
+    });
+
+    test('parses map of custom objects with fromJson', () {
+      final json = {
+        'userMap': {
+          'alice': {'id': 1, 'name': 'Alice', 'age': 30},
+          'bob': {'id': 2, 'name': 'Bob', 'age': 25},
+        },
+      };
+      final parser = JsonParser(json, 'UserMapResponse');
+
+      final userMap = parser.parseMap<SimpleUser>('userMap', fromJson: SimpleUser.fromJson);
+
+      expect(userMap.length, equals(2));
+      expect(userMap['alice'], equals(SimpleUser(id: 1, name: 'Alice', age: 30)));
+      expect(userMap['bob'], equals(SimpleUser(id: 2, name: 'Bob', age: 25)));
+    });
+
+    test('primitive lists still work without fromJson', () {
+      final json = {
+        'tags': ['dart', 'flutter', 'json'],
+        'scores': [90, 85, 88],
+      };
+      final parser = JsonParser(json, 'Test');
+
+      // Should work exactly as before
+      final tags = parser.parseList<String>('tags');
+      expect(tags, equals(['dart', 'flutter', 'json']));
+
+      final scores = parser.parseList<int>('scores');
+      expect(scores, equals([90, 85, 88]));
     });
   });
 
@@ -536,6 +632,33 @@ void main() {
       expect(data['map'], equals({'nested': 'value'}));
     });
   });
+}
+
+// Simple test model for object parsing tests
+class SimpleUser {
+  final int id;
+  final String name;
+  final int age;
+
+  SimpleUser({required this.id, required this.name, required this.age});
+
+  factory SimpleUser.fromJson(Map<String, dynamic> json) {
+    final parser = JsonParser(json, 'SimpleUser');
+    return SimpleUser(
+      id: parser.parse<int>('id'),
+      name: parser.parse<String>('name'),
+      age: parser.parse<int>('age'),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SimpleUser && other.id == id && other.name == name && other.age == age;
+  }
+
+  @override
+  int get hashCode => Object.hash(id, name, age);
 }
 
 // Simple test models

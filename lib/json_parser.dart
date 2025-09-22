@@ -21,7 +21,6 @@ class JsonParser {
 
     final isNullable = null is T;
 
-    // Handle null/missing values - fallback applies here
     if (value == null) {
       if (isNullable) {
         return null as T;
@@ -42,41 +41,57 @@ class JsonParser {
   /// This method ensures that all items in the list are of type T.
   /// Use this instead of parse<List> when you need a typed list.
   ///
-  /// Example:
+  /// For custom objects, provide a fromJson function:
   /// ```dart
-  /// final tags = parser.parseList<String>('tags');  // Returns List<String>
-  /// final scores = parser.parseList<int>('scores');  // Returns List<int>
+  /// final tags = parser.parseList<String>('tags');  // Primitives
+  /// final users = parser.parseList<User>('users', fromJson: User.fromJson);  // Objects
   /// ```
-  List<T> parseList<T>(String key, {List<T> fallback = const []}) {
+  List<T> parseList<T>(
+    String key, {
+    List<T> fallback = const [],
+    T Function(Map<String, dynamic>)? fromJson,
+  }) {
     final value = json[key];
 
-    // Handle null/missing values - use fallback
     if (value == null) {
       return fallback;
     }
 
-    // Type checking - throw for non-list
     if (value is! List) {
       _throwTypeMismatch(key, List, value);
     }
 
-    // Build result list with single iteration
     final validItems = <T>[];
 
     for (int i = 0; i < value.length; i++) {
       try {
-        validItems.add(value[i] as T);
+        if (fromJson != null) {
+          if (value[i] is! Map<String, dynamic>) {
+            _defaultLogger?.logError({
+              'error': 'Expected Map for object parsing',
+              'field': key,
+              'model': modelName,
+              'index': i,
+              'expected': 'Map<String, dynamic>',
+              'actual': value[i].runtimeType.toString(),
+              'value': value[i],
+            });
+            continue;
+          }
+          validItems.add(fromJson(value[i] as Map<String, dynamic>));
+        } else {
+          validItems.add(value[i] as T);
+        }
       } catch (e) {
-        // Log error if logger is configured
         _defaultLogger?.logError({
-          'error': 'Type mismatch in list',
+          'error': fromJson != null ? 'Object parsing failed' : 'Type mismatch in list',
           'field': key,
           'model': modelName,
           'index': i,
           'expected': T.toString(),
           'actual': value[i],
+          'exception': fromJson != null ? e.toString() : null,
         });
-        // Skip this item and continue
       }
     }
 
@@ -88,29 +103,29 @@ class JsonParser {
   /// This method ensures that all keys are strings and all values are of type V.
   /// Use this when you need a typed map like Map<String, int> or Map<String, String>.
   ///
-  /// Example:
+  /// For custom objects as values, provide a fromJson function:
   /// ```dart
-  /// final scores = parser.parseMap<int>('scores');  // Returns Map<String, int>
-  /// final config = parser.parseMap<String>('config');  // Returns Map<String, String>
+  /// final scores = parser.parseMap<int>('scores');  // Primitives
+  /// final userMap = parser.parseMap<User>('users', fromJson: User.fromJson);  // Objects
   /// ```
-  Map<String, V> parseMap<V>(String key, {Map<String, V> fallback = const {}}) {
+  Map<String, V> parseMap<V>(
+    String key, {
+    Map<String, V> fallback = const {},
+    V Function(Map<String, dynamic>)? fromJson,
+  }) {
     final value = json[key];
 
-    // Handle null/missing values - use fallback
     if (value == null) {
       return fallback;
     }
 
-    // Type checking - throw for non-map
     if (value is! Map) {
       _throwTypeMismatch(key, Map, value);
     }
 
-    // Build result map with single iteration
     final validEntries = <String, V>{};
 
     for (final entry in value.entries) {
-      // Check key is String
       if (entry.key is! String) {
         _defaultLogger?.logError({
           'error': 'Invalid map key type',
@@ -119,28 +134,41 @@ class JsonParser {
           'key': entry.key,
           'keyType': entry.key.runtimeType.toString(),
         });
-        continue; // Skip this entry
+        continue;
       }
 
-      // Try to cast the value
       try {
-        // Special handling for double type - accept int as well
-        if (V == double && entry.value is int) {
-          validEntries[entry.key as String] = (entry.value as int).toDouble() as V;
+        if (fromJson != null) {
+          if (entry.value is! Map<String, dynamic>) {
+            _defaultLogger?.logError({
+              'error': 'Expected Map for object parsing',
+              'field': key,
+              'model': modelName,
+              'key': entry.key,
+              'expected': 'Map<String, dynamic>',
+              'actual': entry.value.runtimeType.toString(),
+              'value': entry.value,
+            });
+            continue;
+          }
+          validEntries[entry.key as String] = fromJson(entry.value as Map<String, dynamic>);
         } else {
-          validEntries[entry.key as String] = entry.value as V;
+          if (V == double && entry.value is int) {
+            validEntries[entry.key as String] = (entry.value as int).toDouble() as V;
+          } else {
+            validEntries[entry.key as String] = entry.value as V;
+          }
         }
       } catch (e) {
-        // Log error if logger is configured
         _defaultLogger?.logError({
-          'error': 'Type mismatch in map',
+          'error': fromJson != null ? 'Object parsing failed' : 'Type mismatch in map',
           'field': key,
           'model': modelName,
           'key': entry.key,
           'expected': V.toString(),
           'actual': entry.value,
+          'exception': fromJson != null ? e.toString() : null,
         });
-        // Skip this entry and continue
       }
     }
 
