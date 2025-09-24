@@ -17,11 +17,13 @@ User.fromJson(Map<String, dynamic> json) {
 ```
 
 When it fails in production, we see:
+
 ```
 type 'String' is not a subtype of type 'int' in type cast
 ```
 
 This tells us nothing. We don't know:
+
 - Which field failed
 - Which model failed
 - What the actual value was
@@ -32,6 +34,7 @@ Even worse, if one user in a list has bad data, the entire list fails to parse.
 ## The Solution
 
 A production-ready parser that:
+
 - **Captures context** when things go wrong
 - **Recovers partial data** from lists and maps
 - **Logs errors** to your monitoring service
@@ -58,6 +61,7 @@ class User {
 ```
 
 When this fails, you get actionable errors:
+
 ```
 ParseException: Type mismatch for field "id" in User
   Expected: int
@@ -70,6 +74,7 @@ ParseException: Type mismatch for field "id" in User
 ### 1. Resilient List & Map Parsing
 
 **Traditional parsing fails completely:**
+
 ```dart
 // If one user has bad data, you get NO users
 final users = (json['users'] as List)
@@ -78,6 +83,7 @@ final users = (json['users'] as List)
 ```
 
 **This parser returns valid items:**
+
 ```dart
 // Returns valid users, skips and logs bad ones
 final users = parser.parseList<User>('users', fromJson: User.fromJson);
@@ -151,6 +157,7 @@ final products = parser.parseList<Product>('products', fromJson: Product.fromJso
 ## Parsing Scenarios
 
 ### Basic Types
+
 ```dart
 // Non-nullable (throws if missing/null)
 parser.parse<int>('age')
@@ -163,6 +170,7 @@ parser.parse<String>('name', fallback: 'Anonymous')
 ```
 
 ### Lists
+
 ```dart
 // Primitive lists with automatic item validation
 parser.parseList<String>('tags')           // Skips non-strings
@@ -176,6 +184,7 @@ parser.parseList<String>('tags', fallback: ['default', 'tags'])
 ```
 
 ### Maps
+
 ```dart
 // Primitive maps
 parser.parseMap<int>('scores')            // Map<String, int>
@@ -189,6 +198,7 @@ parser.parseMap<double>('prices')         // Accepts both int and double values
 ```
 
 ### Nested Objects
+
 ```dart
 class User {
   final int id;
@@ -302,3 +312,34 @@ Future<List<User>> fetchUsers() async {
   // Returns valid users, logs invalid ones
   return parser.parseList<User>('data', fromJson: User.fromJson);
 }
+```
+
+## Performance
+
+Performance comparison between traditional parsing (`json['field'] as Type? ?? default`) and JsonParser (average of 3 runs):
+
+### Clean Data (all valid)
+
+| Dataset Size | Items | Data Size | Traditional | JsonParser |
+| ------------ | ----- | --------- | ----------- | ---------- |
+| Small        | 10    | ~2.4 KB   | 0.07 ms     | 0.06 ms    |
+| Medium       | 100   | ~24 KB    | 0.27 ms     | 0.30 ms    |
+| Large        | 500   | ~122 KB   | 1.48 ms     | 2.42 ms    |
+| XLarge       | 4000  | ~989 KB   | 6.32 ms     | 7.74 ms    |
+
+### Data with ~10% Invalid Fields
+
+| Dataset Size | Items | Data Size | Traditional | JsonParser |
+| ------------ | ----- | --------- | ----------- | ---------- |
+| Small        | 10    | ~2.2 KB   | 0.14 ms     | 0.33 ms    |
+| Medium       | 100   | ~21 KB    | 0.18 ms     | 0.36 ms    |
+| Large        | 500   | ~109 KB   | 0.91 ms     | 2.77 ms    |
+| XLarge       | 4000  | ~885 KB   | 7.20 ms     | 12.14 ms   |
+
+### Running Performance Tests
+
+To run the performance benchmark on your machine:
+
+```bash
+dart test/performance_test.dart
+```

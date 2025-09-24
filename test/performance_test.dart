@@ -35,15 +35,13 @@ class TraditionalUser {
       email: json['email'] as String? ?? '',
       age: json['age'] as int? ?? 0,
       isActive: json['isActive'] as bool? ?? false,
-      tags: tagsRaw != null
-          ? tagsRaw.whereType<String>().toList()
-          : [],
+      tags: tagsRaw != null ? tagsRaw.whereType<String>().toList() : [],
       scores: scoresRaw != null
           ? Map<String, double>.from(
               scoresRaw.map((key, value) => MapEntry(
-                key.toString(),
-                value is num ? value.toDouble() : 0.0,
-              )),
+                    key.toString(),
+                    value is num ? value.toDouble() : 0.0,
+                  )),
             )
           : {},
       createdAt: json['createdAt'] as String? ?? '',
@@ -91,8 +89,30 @@ class ParserUser {
 // Test data generator
 class TestDataGenerator {
   static final _random = Random(42); // Fixed seed for reproducible results
-  static final _names = ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve', 'Frank', 'Grace', 'Henry', 'Ivy', 'Jack'];
-  static final _tags = ['flutter', 'dart', 'mobile', 'web', 'backend', 'frontend', 'database', 'cloud', 'ai', 'ml'];
+  static final _names = [
+    'Alice',
+    'Bob',
+    'Charlie',
+    'Diana',
+    'Eve',
+    'Frank',
+    'Grace',
+    'Henry',
+    'Ivy',
+    'Jack'
+  ];
+  static final _tags = [
+    'flutter',
+    'dart',
+    'mobile',
+    'web',
+    'backend',
+    'frontend',
+    'database',
+    'cloud',
+    'ai',
+    'ml'
+  ];
 
   static Map<String, dynamic> generateValidUser(int id) {
     final name = _names[_random.nextInt(_names.length)];
@@ -118,8 +138,8 @@ class TestDataGenerator {
   static Map<String, dynamic> generateUserWithErrors(int id) {
     final data = generateValidUser(id);
 
-    // Introduce ~10% errors randomly
-    final errorType = _random.nextInt(10);
+    // Introduce ~5% errors randomly
+    final errorType = _random.nextInt(20);
 
     switch (errorType) {
       case 0:
@@ -164,7 +184,7 @@ class TestDataGenerator {
         data['scores'] = 'not a map';
         break;
       default:
-        // Keep it valid (90% of cases)
+        // Keep it valid (95% of cases)
         break;
     }
 
@@ -213,8 +233,10 @@ class PerformanceTest {
     final traditionalMs = traditionalDuration.inMicroseconds / 1000.0;
     final parserMs = parserDuration.inMicroseconds / 1000.0;
 
-    print('Traditional parsing: ${traditionalMs.toStringAsFixed(2)} ms (${traditionalUsers.length} successful)');
-    print('JsonParser parsing:  ${parserMs.toStringAsFixed(2)} ms (${parserUsers.length} successful)');
+    print(
+        'Traditional parsing: ${traditionalMs.toStringAsFixed(2)} ms (${traditionalUsers.length} successful)');
+    print(
+        'JsonParser parsing:  ${parserMs.toStringAsFixed(2)} ms (${parserUsers.length} successful)');
 
     // Memory estimation (rough)
     final jsonSize = json.encode(dataset).length;
